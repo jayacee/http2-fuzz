@@ -53,6 +53,7 @@ global_debugger = debugger()
 
 class connection_handler:
     def __init__(self,ip,stream_id,wordlist_handle,print_criteria,port=80,ignore=False):
+        self._hpack_decoder = huffman.HpackDecoder(max_table_size=http2.constants.CLIENT_SETTINGS[0x1])
         self.ip = ip
         self.port = port
 
@@ -66,6 +67,7 @@ class connection_handler:
         self.stream_id = stream_id
         self.socket = None
     def make_connection(self,reset_stream=False):
+        self.stream_id = 1
         if not reset_stream:
             host = self.ip
             try:
@@ -108,13 +110,19 @@ class connection_handler:
             else:
                 return False
     def next_get_request(self,check_path):
-        return http2.http2_get(self.socket,"/" + check_path,self.stream_id,self.ip)
+        return http2.http2_get(self.socket,"/" + check_path,self.stream_id,self.ip,self._hpack_decoder)
         
     def thread_entry(self):
         self.make_connection()
         while (path_to_check := self.wordlist_handle.__next__().strip()):
+            path_to_check = urllib.parse.quote(path_to_check)
             retry_word = True
+            retry_count = 0
             while retry_word:
+                retry_count += 1
+                if retry_count > 2:
+                    # Path causing an error, ignore
+                    break
                 retry_word = False
                 if global_debugger.terminate_thread:
                     exit()
@@ -122,11 +130,12 @@ class connection_handler:
                 data = self.next_get_request(path_to_check)
                         
                 if data[0] == -1: #FRAME_RST_STREAM
-                    global_debugger.print_message(f"[STREAM {self.stream_id}] FRAME_RST received, restarting stream...",global_debugger.warning)
-                    if self.ignore:
-                        self.make_connection()
-                    else:
-                        self.make_connection(reset_stream=True)
+                    global_debugger.print_message(f"[STREAM {self.stream_id}] FRAME_RST received, incrementing stream...",global_debugger.warning)
+                    self.stream_id += 2
+                    #if self.ignore:
+                    #    self.make_connection()
+                    #else:
+                    #    self.make_connection(reset_stream=True)
                     retry_word = True
 
                 elif data[0] == -2: #FRAME_GOAWAY

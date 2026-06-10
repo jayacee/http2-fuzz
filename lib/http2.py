@@ -81,7 +81,7 @@ def read_frames(sock):
         yield frame_type, flags, stream_id, payload
 
 
-def http2_get(sock, path,stream_id,ip_address,extra_headers=None):
+def http2_get(sock, path,stream_id,ip_address,_hpack_decoder,extra_headers=None):
     try:
         #Build HEADERS frame for our GET request
         req_headers: list[tuple[bytes, bytes]] = [
@@ -137,7 +137,7 @@ def http2_get(sock, path,stream_id,ip_address,extra_headers=None):
                     hblock = hblock[5:]
 
                 if flags & constants.FLAG_END_HEADERS:
-                    decoded = huffman.hpack_decode_headers(hblock)
+                    decoded = _hpack_decoder.decode(hblock)
                     for name, value in decoded:
                         name_s  = name.decode(errors="replace")
                         value_s = value.decode(errors="replace")
@@ -154,7 +154,7 @@ def http2_get(sock, path,stream_id,ip_address,extra_headers=None):
             elif frame_type == constants.FRAME_CONTINUATION:
                 continuation_buf += payload
                 if flags & constants.FLAG_END_HEADERS:
-                    decoded = huffman.hpack_decode_headers(continuation_buf)
+                    decoded = _hpack_decoder.decode(continuation_buf)
                     continuation_buf = b""
                     for name, value in decoded:
                         name_s  = name.decode(errors="replace")
@@ -195,6 +195,7 @@ def http2_get(sock, path,stream_id,ip_address,extra_headers=None):
     except ConnectionError:
         return (-3,None,None)
     except Exception as e:
+        print(e)
         return (-5,None,None)
  
     return status_code, resp_headers, b"".join(body_parts)
