@@ -16,9 +16,8 @@ options:
   -h, --help            show this help message and exit
   -v                    Enable debugging
   -t THREADS, --threads THREADS
-                        Number of threads to run (default 12)
-  -i                    Ignore FRAME_RST frames and restart connection anyway (may lead to a faster time if server
-                        doesn't support keep-alive connections)
+                        Number of threads to run (default 64)
+
   -s STATUS_EQUALS      Status Code Equals (i.e., -s 200,201)
   -sn STATUS_NOT_EQUALS
                         Status Code Not Equals (i.e., -sn 404)
