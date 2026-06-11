@@ -52,8 +52,11 @@ class debugger:
 global_debugger = debugger()
 
 class connection_handler:
-    def __init__(self,ip,stream_id,wordlist_handle,print_criteria,port=80):
+    def __init__(self,ip,stream_id,wordlist_handle,print_criteria,port=80,use_ssl=False):
+
         self._hpack_decoder = huffman.HpackDecoder(max_table_size=http2.constants.CLIENT_SETTINGS[0x1])
+
+        self.use_ssl = use_ssl
         self.ip = ip
         self.port = port
 
@@ -70,6 +73,13 @@ class connection_handler:
             host = self.ip
             try:
                 sock  = socket.create_connection((self.ip, self.port), timeout=10)
+                if self.use_ssl:
+                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                    context.set_alpn_protocols(["h2"])
+                    sock = context.wrap_socket(sock, server_hostname=self.ip)
+                    
             except socket.gaierror as e:
                 global_debugger.print_message(f"[STREAM {self.stream_id}] SOCKET ERROR {e}",global_debugger.error)
                 global_debugger.terminate_thread = True
@@ -216,15 +226,22 @@ def main():
 
     ip_addr = parsed_url.hostname
     port = parsed_url.port
-    if port == None:
-        port = 80
     scheme = parsed_url.scheme
-    if not scheme:
-        global_debugger.print_message("Please specify a scheme before the IP address (i.e., http://)",global_debugger.error)
+
+    if scheme != "https" and scheme != "http":
+        global_debugger.print_message("Please specify a scheme before the IP address (i.e., http:// or https://)",global_debugger.error)
         exit()
 
+    use_ssl = False
+    
     if scheme == "https":
-        global_debugger.print_message("Currently does not support HTTPS/SSL",global_debugger.error)
+        use_ssl = True
+        
+    if port == None:
+        if scheme == "https":
+            port = 443
+        else:
+            port = 80
 
     global_debugger.enabled = args.v
     
@@ -244,6 +261,7 @@ def main():
             ThreadSafeFileIterator(wordlist_handle),
             print_criteria,
             port=port,
+            use_ssl=use_ssl
             )
         
         thread = threading.Thread(target=connection_manager.thread_entry)
