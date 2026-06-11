@@ -214,8 +214,8 @@ def huffman_decode(data):
     if _HUFFMAN_DECODE is None:
         _HUFFMAN_DECODE = _build_huffman_decode_table()
 
-    # Build a bit string, then consume symbols one at a time using a
-    # simple longest-match scan (max code length is 30 bits).
+    # build a bit string, then consume symbols one at a time using a
+    # simple longest-match scan (max code length is 30 bits)
     bits = int.from_bytes(data, "big")
     total_bits = len(data) * 8
     pos = 0
@@ -298,7 +298,7 @@ def hpack_decode_headers(data):
     return headers
 
 class HpackDecoder:
-    """Stateful HPACK decoder — one instance per connection, shared across all streams."""
+    # Stateful HPACK decoder
 
     def __init__(self, max_table_size: int = 4096):
         self._dynamic: list[tuple[bytes, bytes]] = []
@@ -314,9 +314,7 @@ class HpackDecoder:
         raise ValueError(f"HPACK index {idx} out of range (dynamic table has {len(self._dynamic)} entries)")
 
     def _insert(self, name: bytes, value: bytes) -> None:
-        """Add an entry, evicting old ones if the table size limit is exceeded."""
         entry_size = len(name) + len(value) + 32  # RFC 7541 §4.1
-        # Evict from the tail (oldest entries) until there's room
         while self._dynamic and self._current_size + entry_size > self._max_size:
             evicted = self._dynamic.pop()
             self._current_size -= len(evicted[0]) + len(evicted[1]) + 32
@@ -325,7 +323,6 @@ class HpackDecoder:
             self._current_size += entry_size
 
     def _resize(self, new_max: int) -> None:
-        """Handle a dynamic table size update instruction (RFC 7541 §6.3)."""
         self._max_size = new_max
         while self._dynamic and self._current_size > self._max_size:
             evicted = self._dynamic.pop()
@@ -337,11 +334,9 @@ class HpackDecoder:
         while offset < len(data):
             b = data[offset]
             if b & 0x80:
-                # §6.1 Indexed Header Field — reference only, no table update
                 idx, offset = _hpack_decode_int(data, offset, 7)
                 headers.append(self._lookup(idx))
             elif b & 0x40:
-                # §6.2.1 Literal with Incremental Indexing — adds to dynamic table
                 idx, offset = _hpack_decode_int(data, offset, 6)
                 name = self._lookup(idx)[0] if idx else (lambda: (v := _hpack_decode_str(data, offset), None)[0])
                 # cleaner version:
@@ -353,11 +348,9 @@ class HpackDecoder:
                 self._insert(name, value)      # ← persists across stream calls
                 headers.append((name, value))
             elif b & 0x20:
-                # §6.3 Dynamic Table Size Update
                 new_size, offset = _hpack_decode_int(data, offset, 5)
                 self._resize(new_size)
             else:
-                # §6.2.2 / §6.2.3 Literal without indexing / never indexed
                 idx, offset = _hpack_decode_int(data, offset, 4)
                 if idx:
                     name = self._lookup(idx)[0]

@@ -194,6 +194,8 @@ def http2_get(sock, path,stream_id,ip_address,_hpack_decoder,extra_headers=None)
                 break
     except ConnectionError:
         return (-3,None,None)
+    except TimeoutError:
+        return (-6,None,None)
     except Exception as e:
         print(e)
         return (-5,None,None)
