@@ -1,5 +1,9 @@
 # http2-fuzz
-HTTP2 web fuzzer made with native Python libraries. Supports multithreading and HTTP2 multiplexing.
+HTTP2 web fuzzer made with native Python libraries. 
+
+This tool works by cycling through HTTP/2 stream ID numbers to avoid terminating the TCP connection, allowing up to 32767 ((2**16)/2 - 1) requests being sent before a connection restart.
+
+The stream ID number is rotated everytime the web server sends back a FRAME_RST frame, and the TCP connection resets everytime the web server sends back a FRAME_GOAWAY frame or the stream number limit is reached.
 
 ```
 usage: http2fuzz.py [-h] [-v] [-t THREADS] [-i]
