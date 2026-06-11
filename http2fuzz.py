@@ -52,12 +52,10 @@ class debugger:
 global_debugger = debugger()
 
 class connection_handler:
-    def __init__(self,ip,stream_id,wordlist_handle,print_criteria,port=80,ignore=False):
+    def __init__(self,ip,stream_id,wordlist_handle,print_criteria,port=80):
         self._hpack_decoder = huffman.HpackDecoder(max_table_size=http2.constants.CLIENT_SETTINGS[0x1])
         self.ip = ip
         self.port = port
-
-        self.ignore = ignore
 
         self.print_criteria = print_criteria
         
@@ -80,11 +78,8 @@ class connection_handler:
             sock = self.socket
         try:
             sock.sendall(http2.constants.CONNECTION_PREFACE)
-            #print("SENT CONNECTION PREFACE")
             sock.sendall(http2.build_settings_frame(http2.constants.CLIENT_SETTINGS))
-            #print("CLIENT_SETTINGS")
             sock.sendall(http2.build_window_update(0, 2 ** 24 - 65535))  # connection-level flow control
-            #print("CONNECTION CONTROL")
             self.socket = sock
             return True
         except Exception as e:
@@ -128,14 +123,16 @@ class connection_handler:
                     exit()
                     
                 data = self.next_get_request(path_to_check)
+
+                if self.stream_id > 65534:
+                    global_debugger.print_message(f"[STREAM {self.stream_id}] Stream number limit reached, restarting connection... ",global_debugger.warning)
+                    print(stream_id)
+                    self.make_connection()
+                    retry_word = True
                         
-                if data[0] == -1: #FRAME_RST_STREAM
+                elif data[0] == -1: #FRAME_RST_STREAM
                     global_debugger.print_message(f"[STREAM {self.stream_id}] FRAME_RST received, incrementing stream...",global_debugger.warning)
                     self.stream_id += 2
-                    #if self.ignore:
-                    #    self.make_connection()
-                    #else:
-                    #    self.make_connection(reset_stream=True)
                     retry_word = True
 
                 elif data[0] == -2: #FRAME_GOAWAY
@@ -148,10 +145,15 @@ class connection_handler:
                     self.make_connection()
                     retry_word = True
 
-                elif data[0] == -5: #CONNECTION_ERROR
-                    global_debugger.print_message(f"[STREAM {self.stream_id}] Unknown error when calling http2_get",global_debugger.error)
+                elif data[0] == -5: #UNKNOWN ERROR
+                    global_debugger.print_message(f"[STREAM {self.stream_id}] Unknown error when calling http2_get, remaking connection...",global_debugger.error)
                     self.make_connection()
-                    retry_word = True   
+                    retry_word = True
+
+                elif data[0] == -6: #TIMEOUT ERROR
+                    global_debugger.print_message(f"[STREAM {self.stream_id}] Timeout detected when calling http2_get, remaking connection...",global_debugger.warning)
+                    self.make_connection()
+                    retry_word = True
 
                 else:
                     global_debugger.attempted_files += 1
@@ -193,9 +195,7 @@ def main():
     
     parser.add_argument("-v",action="store_true",help="Enable debugging")
 
-    parser.add_argument("-t","--threads",help="Number of threads to run (default 12)",default=12,type=int)
-
-    parser.add_argument("-i",help="Ignore FRAME_RST frames and restart connection anyway (may lead to a faster time if server doesn't support keep-alive connections)",action="store_true")
+    parser.add_argument("-t","--threads",help="Number of threads to run (default 64)",default=64,type=int)
 
     print_on = parser.add_mutually_exclusive_group()
 
@@ -244,7 +244,6 @@ def main():
             ThreadSafeFileIterator(wordlist_handle),
             print_criteria,
             port=port,
-            ignore=args.i
             )
         
         thread = threading.Thread(target=connection_manager.thread_entry)
