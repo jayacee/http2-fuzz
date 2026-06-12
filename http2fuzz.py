@@ -14,12 +14,15 @@ import signal
 
 import time
 
-from os import system # Uses os.system("") to enable ANSI color codes on Windows
+import sys
+import os # Uses os.system("") to enable ANSI color codes on Windows
 
 
 class debugger:
     def __init__(self,enabled=False):
         self.enabled = enabled
+        self.exit = False
+        self.words = []
 
         self.attempted_files = 0
 
@@ -69,6 +72,9 @@ class connection_handler:
         self.socket = None
     def make_connection(self,reset_stream=False):
         self.stream_id = 1
+        self._hpack_decoder = huffman.HpackDecoder(
+            max_table_size=http2.constants.CLIENT_SETTINGS[0x1]
+        )
         if not reset_stream:
             host = self.ip
             try:
@@ -98,7 +104,6 @@ class connection_handler:
             return False
     def check_print_criteria(self,data_response):
         status_code = data_response[0]
-        # print(self.print_criteria)
         if self.print_criteria["status_codes"]:
             for target_status_code in self.print_criteria["status_codes"]:
                 if status_code == int(target_status_code):
@@ -119,7 +124,11 @@ class connection_handler:
         
     def thread_entry(self):
         self.make_connection()
-        while (path_to_check := self.wordlist_handle.__next__().strip()):
+        while True:
+            try:
+                path_to_check = global_debugger.words.pop(0)
+            except IndexError:
+                break
             path_to_check = urllib.parse.quote(path_to_check)
             retry_word = True
             retry_count = 0
@@ -170,32 +179,54 @@ class connection_handler:
                     should_print = self.check_print_criteria(data)
                     if should_print:
                         global_debugger.print_message(f"[STREAM {self.stream_id}] /{path_to_check} (Status Code: {data[0]} Content Length: {len(data[2])}",global_debugger.success)
-
-
+        global_debugger.terminate_thread = True
+        if not global_debugger.exit:
+            global_debugger.exit = True
+            global_debugger.print_message(f"Fuzzer Finished; Press Enter To Exit",global_debugger.success)
+        os._exit(0)
 
 class ThreadSafeFileIterator:
     def __init__(self, file_handle):
-        self.file = file_handle
-        self.lock = threading.Lock()
+        # Load all lines eagerly so threads never share a file cursor
+        self._lines = [line.strip() for line in file_handle if line.strip()]
+        self._index = 0
+        self._lock  = threading.Lock()
 
     def __iter__(self):
         return self
 
-    def tell(self):
-        return self.file.tell()
-
-    def seek(self,loc):
-        with self.lock:
-            self.file.seek(loc)
-
     def __next__(self):
-        # Ensure only one thread pulls a line from the file buffer at a time
-        with self.lock:
-            line = self.file.readline()
-            return line.strip()
+        with self._lock:
+            if self._index >= len(self._lines):
+                return ""          # signals exhaustion, matches existing while-loop logic
+            word = self._lines[self._index]
+            self._index += 1
+            return word
+
+def thread_manager():
+    seconds_elapsed = 0
+
+    starting_time = time.time()
+    try:
+        print("Fuzzer started")
+        print("Press enter for status or press Ctrl+C to exit")
+
+        while True:
+            if not global_debugger.terminate_thread:
+                input()
+                seconds_elapsed = time.time() - starting_time
+                print(f"{round(seconds_elapsed,1)} seconds elapsed; {round(global_debugger.attempted_files/seconds_elapsed,2)} files/s")
+            else:
+                exit()
+    except KeyboardInterrupt:
+        pass
+    except EOFError: # main thread terminated
+        pass
+    global_debugger.terminate_thread = True
+    exit()
 
 def main():
-    system("") # Enables ANSI Color Codes
+    os.system("") # Enables ANSI Color Codes
     
 
     parser = argparse.ArgumentParser(description="HTTP/2 Based Web Fuzzer Written In Python")
@@ -251,6 +282,8 @@ def main():
 
     thread_array = []
 
+    global_debugger.words = wordlist_handle.read().split("\n")
+
     for thread_count in range(1,args.threads+1):
         stream_id = odd_numbers[thread_count-1]
         global_debugger.print_message(f"Starting thread {thread_count} for stream id {stream_id}",global_debugger.info)
@@ -265,25 +298,18 @@ def main():
             )
         
         thread = threading.Thread(target=connection_manager.thread_entry)
-        thread_array.append(thread)
         thread.start()
-        
-    seconds_elapsed = 0
 
-    starting_time = time.time()
-    try:
-        print("Fuzzer started")
-        print("Press enter for status or press Ctrl+C to exit")
-
-        while True:
-            input()
-            seconds_elapsed = time.time() - starting_time
-            print(f"{round(seconds_elapsed,1)} seconds elapsed; {round(global_debugger.attempted_files/seconds_elapsed,2)} files/s")
-
-    except KeyboardInterrupt:
-        pass
-    global_debugger.terminate_thread = True
-    exit()
+    threading.Thread(target=thread_manager).start()
+    while True:
+        try:
+            time.sleep(0.1)
+            if global_debugger.terminate_thread:
+                exit()
+        except KeyboardInterrupt:
+            global_debugger.terminate_thread = True
+            time.sleep(0.1)
+            exit()
         
 if __name__ == "__main__":
     main()
